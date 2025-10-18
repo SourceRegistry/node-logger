@@ -1,5 +1,7 @@
 import { JSONFormatter } from "../formatters";
 import {LogEntry,Transport, Formatter, LogLevel} from "../types";
+import {createWriteStream, existsSync, mkdirSync, type WriteStream} from "fs";
+import {dirname} from "path";
 
 /**
  * FileTransport - Auto-flushes every 5 seconds to ensure disk writes
@@ -9,26 +11,24 @@ import {LogEntry,Transport, Formatter, LogLevel} from "../types";
  * ]);
  */
 export class FileTransport implements Transport {
-    private readonly writeStream: NodeJS.WritableStream;
+    private readonly writeStream: WriteStream;
     private writeQueue: Promise<void> = Promise.resolve();
     private readonly flushTimer?: NodeJS.Timeout;
 
     constructor(
-        private filePath: string,
+        filePath: string,
         private formatter: Formatter = new JSONFormatter(),
         private minLevel: LogLevel = LogLevel.INFO,
-        private autoFlushInterval: number = 5000 // Auto-flush every 5 seconds
+        autoFlushInterval: number = 5000 // Auto-flush every 5 seconds
     ) {
-        const fs = require('fs');
-        const path = require('path');
 
         // Ensure directory exists
-        const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, { recursive: true });
+        const dir = dirname(filePath);
+        if (!existsSync(dir)) {
+            mkdirSync(dir, { recursive: true });
         }
 
-        this.writeStream = fs.createWriteStream(filePath, { flags: 'a' });
+        this.writeStream = createWriteStream(filePath, { flags: 'a' });
 
         // Auto-flush timer to ensure data is written to disk
         if (autoFlushInterval > 0) {

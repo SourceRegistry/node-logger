@@ -6,7 +6,7 @@ export class JSONFormatter implements Formatter {
             timestamp: entry.timestamp.toISOString(),
             level: LogLevel[entry.level],
             message: entry.message,
-            ...entry.context,
+            context: entry.context,
             ...(entry.error && {
                 error: ({
                     name: entry.error.name,

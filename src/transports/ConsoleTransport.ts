@@ -4,7 +4,8 @@ import {TextFormatter} from "../formatters";
 export class ConsoleTransport implements Transport {
     constructor(
         private formatter: Formatter = new TextFormatter(),
-        private minLevel: LogLevel = LogLevel.INFO
+        private minLevel: LogLevel = LogLevel.INFO,
+        private readonly binding: typeof console = console,
     ) {}
 
     write(entry: LogEntry): void {
@@ -16,14 +17,14 @@ export class ConsoleTransport implements Transport {
             case LogLevel.TRACE:
             case LogLevel.DEBUG:
             case LogLevel.INFO:
-                console.info(formatted);
+                (this.binding.log || this.binding.info)(formatted);
                 break;
             case LogLevel.WARN:
-                console.warn(formatted);
+                this.binding.warn(formatted);
                 break;
             case LogLevel.ERROR:
             case LogLevel.FATAL:
-                console.error(formatted);
+                this.binding.error(formatted);
                 break;
         }
     }

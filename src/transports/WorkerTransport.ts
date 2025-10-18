@@ -1,5 +1,7 @@
 import {JSONFormatter} from "../formatters";
 import {LogEntry,Transport, Formatter, LogLevel} from "../types";
+import {Worker} from "worker_threads";
+
 /**
  * For extremely high-throughput scenarios
  */
@@ -16,8 +18,6 @@ export class WorkerTransport implements Transport {
     }
 
     private startWorker(): void {
-        const {Worker} = require('worker_threads');
-
         this.worker = new Worker(this.workerScript);
 
         this.worker.on('error', (error: Error) => {

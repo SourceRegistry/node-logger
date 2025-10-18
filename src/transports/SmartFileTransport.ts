@@ -1,6 +1,9 @@
 import {JSONFormatter} from "../formatters";
 import {LogEntry, Transport, Formatter, LogLevel, AutoFlushConfig} from "../types";
 import {DEFAULT_AUTO_FLUSH} from "../constants";
+import {dirname} from "path";
+import {createWriteStream, existsSync, mkdirSync, WriteStream} from "fs";
+
 
 /**
  * SmartFileTransport - Multiple auto-flush triggers
@@ -16,28 +19,24 @@ import {DEFAULT_AUTO_FLUSH} from "../constants";
  * ]);
  */
 export class SmartFileTransport implements Transport {
-    private writeStream: NodeJS.WritableStream;
+    private writeStream: WriteStream;
     private buffer: string[] = [];
     private flushTimer?: NodeJS.Timeout;
     private idleTimer?: NodeJS.Timeout;
-    private lastWriteTime = Date.now();
     private isClosing = false;
 
     constructor(
-        private filePath: string,
+        filePath: string,
         private formatter: Formatter = new JSONFormatter(),
         private minLevel: LogLevel = LogLevel.INFO,
         private autoFlush: AutoFlushConfig = DEFAULT_AUTO_FLUSH
     ) {
-        const fs = require('fs');
-        const path = require('path');
-
-        const dir = path.dirname(filePath);
-        if (!fs.existsSync(dir)) {
-            fs.mkdirSync(dir, {recursive: true});
+        const dir = dirname(filePath);
+        if (!existsSync(dir)) {
+            mkdirSync(dir, {recursive: true});
         }
 
-        this.writeStream = fs.createWriteStream(filePath, {flags: 'a'});
+        this.writeStream = createWriteStream(filePath, {flags: 'a'});
 
         if (this.autoFlush.enabled) {
             this.setupAutoFlush();
@@ -75,7 +74,6 @@ export class SmartFileTransport implements Transport {
 
         const formatted = this.formatter.format(entry);
         this.buffer.push(formatted);
-        this.lastWriteTime = Date.now();
 
         // Reset idle timer
         this.resetIdleTimer();

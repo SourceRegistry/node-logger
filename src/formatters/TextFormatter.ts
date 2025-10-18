@@ -21,15 +21,20 @@ export class TextFormatter implements Formatter {
 
         parts.push(entry.message);
 
+        // Handle context
         if (entry.context && Object.keys(entry.context).length > 0) {
             parts.push(JSON.stringify(entry.context));
         }
 
+        // Build the full output so far
+        let result = parts.join(' ');
+
+        // Append error without leading space
         if (entry.error) {
-            parts.push(`\nError: ${entry.error.message}\n${entry.error.stack}`);
+            result += `\nError: ${entry.error.message}\n${entry.error.stack}`;
         }
 
-        return parts.join(' ');
+        return result;
     }
 
     private getLevelColor(level: LogLevel): string {

@@ -101,7 +101,11 @@ export class Logger implements ILogger {
         await Promise.all(
             this.transports
                 .filter(transport => transport.close)
-                .map(transport => transport.close!())
+                .map(transport =>
+                    Promise.resolve(transport.close!()).catch(() => {
+                        // Intentionally ignore close errors to ensure graceful shutdown
+                    })
+                )
         );
     }
 }
