@@ -129,31 +129,6 @@ process.on('SIGTERM', async () => {
   process.exit(0);
 });
 ```
-
----
-
-## 📚 API Highlights
-
-- `logger.trace|debug|info|warn|error|fatal(message, context?, error?)`
-- `logger.withTags(...tags)`
-- `logger.addTransport(transport)`
-- `logger.removeTransport(transport)`
-- `logger.setLevel(level)`
-- `logger.close()`
-
----
-
-## 📁 Project Structure
-
-```
-├── Logger.ts
-├── transports/
-├── formatters/
-├── types/
-├── utils/
-├── examples/
-```
-
 ---
 
 ## 📜 License
