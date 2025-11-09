@@ -35,7 +35,8 @@
     "transport",
     "elasticsearch",
     "cef",
-    "syslog"
+    "syslog",
+    "JSON"
   ],
   "author": "A.P.A. Slaa (a.p.a.slaa@projectsource.nl)",
   "license": "Apache-2.0",
