@@ -19,6 +19,7 @@
     "build": "tsc && vite build",
     "build:docs": "typedoc src/index.ts --out docs --name \"node-logger\" --theme default --excludePrivate --excludeProtected",
     "preview": "vite preview",
+    "example": "tsx examples/console.transport.example.ts",
     "test": "vitest",
     "test:ui": "vitest --ui",
     "test:coverage": "vitest run --coverage"
