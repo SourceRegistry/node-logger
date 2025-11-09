@@ -49,7 +49,7 @@ describe('TextFormatter', () => {
             timestamp
         });
 
-        expect(output).toBe(`[2025-10-18T12:00:00.000Z] [DEBUG] [auth,v2] Tagged log`);
+        expect(output).toBe(`[2025-10-18T12:00:00.000Z] [DEBUG] [auth] [v2] Tagged log`);
     });
 
     it('includes context as JSON if present', () => {
