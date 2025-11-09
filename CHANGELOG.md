@@ -1,3 +1,10 @@
+## [1.0.1](https://github.com/SourceRegistry/node-logger/compare/v1.0.0...v1.0.1) (2025-11-09)
+
+
+### Bug Fixes
+
+* release to npm ([2621ea6](https://github.com/SourceRegistry/node-logger/commit/2621ea6bc9865e1db4562d3e1703a57979e8ef84))
+
 # 1.0.0 (2025-11-09)
 
 
