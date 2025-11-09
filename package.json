@@ -1,7 +1,7 @@
 {
   "name": "@sourceregistry/node-logger",
   "version": "0.0.2",
-  "description": "Advanced, pluggable logger for Node.js with multiple transport and formatting options.",
+  "description": "Advanced, pluggable logger for Node.js with multiple transport and formatting options. [WIP]",
   "main": "./dist/index.es.js",
   "module": "./dist/index.es.js",
   "types": "./dist/index.d.ts",
