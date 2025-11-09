@@ -16,7 +16,7 @@ export class TextFormatter implements Formatter {
         if (this.colored) parts.push(TextFormatter.Colors.RESET);
 
         if (entry.tags?.length) {
-            parts.push(`[${entry.tags.join(',')}]`);
+            entry.tags.forEach(tag => parts.push(`[${tag}]`))
         }
 
         parts.push(entry.message);

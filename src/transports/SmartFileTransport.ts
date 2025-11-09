@@ -24,6 +24,7 @@ export class SmartFileTransport implements Transport {
     private flushTimer?: NodeJS.Timeout;
     private idleTimer?: NodeJS.Timeout;
     private isClosing = false;
+    private closed: boolean = false;
 
     constructor(
         filePath: string,
@@ -75,22 +76,20 @@ export class SmartFileTransport implements Transport {
         const formatted = this.formatter.format(entry);
         this.buffer.push(formatted);
 
-        // Reset idle timer
+        // If auto-flush is disabled, do nothing else
+        if (!this.autoFlush.enabled) {
+            return;
+        }
+
         this.resetIdleTimer();
 
-        // Check for immediate flush conditions
         let shouldFlush = false;
-
-        // Flush on critical log levels
         if (this.autoFlush.onLevel && entry.level >= this.autoFlush.onLevel) {
             shouldFlush = true;
         }
-
-        // Flush on buffer size
         if (this.autoFlush.onSize && this.buffer.length >= this.autoFlush.onSize) {
             shouldFlush = true;
         }
-
         if (shouldFlush) {
             this.flush();
         }
@@ -110,6 +109,8 @@ export class SmartFileTransport implements Transport {
     }
 
     async close(): Promise<void> {
+        if (this.closed) return; // 👈 early exit
+        this.closed = true;
         this.isClosing = true;
 
         if (this.flushTimer) {

@@ -1,7 +1,7 @@
 # 🧠 @sourceregistry/node-logger – Advanced Logging Framework [WORK IN PROGRESS]
 
 A powerful, pluggable TypeScript logger for Node.js applications.  
-Supports JSON, text, CEF, and Syslog formatting, multiple transport targets (console, file, HTTP, Splunk, Elasticsearch), and auto-flush strategies for production-grade logging.
+Supports JSON, text, CEF, and Syslog formatting, multiple transport targets (console, file, HTTP, Elasticsearch), and auto-flush strategies for production-grade logging.
 
 ---
 
@@ -16,7 +16,7 @@ Supports JSON, text, CEF, and Syslog formatting, multiple transport targets (con
 - **Transports:**
   - `ConsoleTransport`
   - `FileTransport`, `BufferedFileTransport`, `SmartFileTransport`
-  - `HTTPTransport`, `SplunkTransport`, `ElasticsearchTransport`
+  - `HTTPTransport`, `ElasticsearchTransport`
   - `WorkerTransport` – offload to worker thread
 - **Auto-flushing:** Configurable by interval, size, severity, and idle timeout
 - **Tagging & Contextual Logging**
@@ -51,20 +51,6 @@ import { File } from '@sourceregistry/node-logger';
 
 const fileLogger = File('./logs/app.log');
 fileLogger.info('Writing to log file');
-```
-
-### Splunk Integration
-
-```ts
-import { Splunk } from '@sourceregistry/node-logger';
-
-const splunkLogger = Splunk({
-  endpoint: 'https://splunk.example.com:8088/services/collector/event',
-  token: 'your-splunk-token',
-  index: 'main'
-});
-
-splunkLogger.info('Logged to Splunk!');
 ```
 
 ### Elasticsearch Integration

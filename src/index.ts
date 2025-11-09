@@ -1,5 +1,5 @@
 import {LogEntry, LogLevel, Transport, ILogger} from "./types";
-import {ConsoleTransport, ElasticsearchTransport, FileTransport, SplunkTransport} from "./transports";
+import {ConsoleTransport, ElasticsearchTransport, FileTransport} from "./transports";
 import {JSONFormatter, TextFormatter} from "./formatters";
 
 export class Logger implements ILogger {
@@ -124,17 +124,17 @@ export function File(filePath: string, level: LogLevel = LogLevel.INFO): Logger 
     ]);
 }
 
-export function Splunk(config: {
-    endpoint: string;
-    token: string;
-    index?: string;
-    level?: LogLevel;
-}): Logger {
-    return new Logger(config.level || LogLevel.INFO, [
-        new ConsoleTransport(new TextFormatter(), config.level || LogLevel.INFO),
-        new SplunkTransport(config)
-    ]);
-}
+// export function Splunk(config: {
+//     endpoint: string;
+//     token: string;
+//     index?: string;
+//     level?: LogLevel;
+// }): Logger {
+//     return new Logger(config.level || LogLevel.INFO, [
+//         new ConsoleTransport(new TextFormatter(), config.level || LogLevel.INFO),
+//         new SplunkTransport(config)
+//     ]);
+// }
 
 export function Elasticsearch(config: {
     endpoint: string;

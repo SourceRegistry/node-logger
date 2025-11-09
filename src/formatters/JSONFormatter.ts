@@ -7,6 +7,7 @@ export class JSONFormatter implements Formatter {
             level: LogLevel[entry.level],
             message: entry.message,
             context: entry.context,
+            tags: entry.tags,
             ...(entry.error && {
                 error: ({
                     name: entry.error.name,

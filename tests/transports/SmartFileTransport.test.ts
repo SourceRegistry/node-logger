@@ -1,31 +1,29 @@
-// tests/transports/SmartFileTransport.test.ts
-import { describe, it, expect, vi, beforeEach, afterEach } from 'vitest';
-import { SmartFileTransport, LogLevel, LogEntry, AutoFlushConfig } from '../../src';
+import {describe, it, expect, vi, beforeEach, afterEach} from 'vitest';
+import { SmartFileTransport, LogLevel, LogEntry, AutoFlushConfig, JSONFormatter } from '../../src';
 
-// ✅ Define mocks BEFORE vi.mock using vi.hoisted
-const mocks = vi.hoisted(() => {
-    return {
-        fs: {
-            existsSync: vi.fn(),
-            mkdirSync: vi.fn(),
-            createWriteStream: vi.fn(),
-        },
-        path: {
-            dirname: vi.fn(),
-        },
-    };
-});
+// Mocks for fs/path
+const mocks = vi.hoisted(() => ({
+    fs: {
+        existsSync: vi.fn(),
+        mkdirSync: vi.fn(),
+        createWriteStream: vi.fn(),
+    },
+    path: {
+        dirname: vi.fn(),
+    },
+}));
 
 vi.mock('fs', () => mocks.fs);
 vi.mock('path', () => mocks.path);
 
-// Helper
+// Helper to create log entries
 const createLogEntry = (level: LogLevel = LogLevel.INFO, message = 'test'): LogEntry => ({
     level,
     message,
-    timestamp: new Date(),
+    timestamp: new Date('2025-10-21T16:25:47.000Z'), // Fixed timestamp for deterministic output
 });
 
+// Helper to create mock write stream
 const createMockWriteStream = () => ({
     write: vi.fn().mockImplementation((data, cb) => {
         if (cb) cb(null);
@@ -42,7 +40,6 @@ describe('SmartFileTransport', () => {
 
     let transport: SmartFileTransport;
     let mockWriteStream: ReturnType<typeof createMockWriteStream>;
-
     const defaultAutoFlush: AutoFlushConfig = {
         enabled: true,
         interval: 5000,
@@ -53,10 +50,9 @@ describe('SmartFileTransport', () => {
 
     beforeEach(() => {
         vi.clearAllMocks();
-        vi.useRealTimers();
+        vi.useRealTimers(); // reset any fake timers from previous tests
 
         mockWriteStream = createMockWriteStream();
-
         mocks.path.dirname.mockReturnValue(dirPath);
         mocks.fs.existsSync.mockReturnValue(false);
         mocks.fs.mkdirSync.mockImplementation(() => {});
@@ -67,6 +63,7 @@ describe('SmartFileTransport', () => {
         if (transport?.close) {
             await transport.close();
         }
+        vi.useRealTimers(); // ensure real timers after each test
     });
 
     it('creates directory if it does not exist', () => {
@@ -88,12 +85,19 @@ describe('SmartFileTransport', () => {
     });
 
     it('does not set up auto-flush if disabled', () => {
+        vi.useFakeTimers();
+
         const autoFlush = { ...defaultAutoFlush, enabled: false };
         transport = new SmartFileTransport(filePath, undefined, LogLevel.INFO, autoFlush);
-        // No timers should be set
-        expect(setInterval).not.toHaveBeenCalled();
-        // But we can't easily spy on global setInterval without mocking it
-        // Instead, verify behavior via flush not being called automatically
+
+        transport.write(createLogEntry(LogLevel.INFO, 'test'));
+        expect(mockWriteStream.write).not.toHaveBeenCalled(); // not flushed immediately
+
+        // Advance time beyond any possible interval or idle
+        vi.advanceTimersByTime(10000);
+
+        // Still should not flush — because auto-flush is disabled
+        expect(mockWriteStream.write).not.toHaveBeenCalled();
     });
 
     it('sets up interval-based auto-flush', () => {
@@ -103,11 +107,17 @@ describe('SmartFileTransport', () => {
             interval: 2000,
         });
 
-        transport.write(createLogEntry(LogLevel.INFO, 'log1'));
-        expect(mockWriteStream.write).not.toHaveBeenCalled(); // not flushed yet
+        const entry = createLogEntry(LogLevel.INFO, 'log1');
+        transport.write(entry);
+        expect(mockWriteStream.write).not.toHaveBeenCalled();
 
         vi.advanceTimersByTime(2000);
-        expect(mockWriteStream.write).toHaveBeenCalledWith(expect.stringContaining('log1\n'), expect.any(Function));
+
+        const expectedJson = new JSONFormatter().format(entry);
+        expect(mockWriteStream.write).toHaveBeenCalledWith(
+            expect.stringContaining(expectedJson),
+            expect.any(Function)
+        );
     });
 
     it('flushes when buffer reaches onSize threshold', () => {
@@ -116,11 +126,22 @@ describe('SmartFileTransport', () => {
             onSize: 2,
         });
 
-        transport.write(createLogEntry(LogLevel.INFO, 'first'));
+        const first = createLogEntry(LogLevel.INFO, 'first');
+        const second = createLogEntry(LogLevel.INFO, 'second');
+
+        transport.write(first);
         expect(mockWriteStream.write).not.toHaveBeenCalled();
 
-        transport.write(createLogEntry(LogLevel.INFO, 'second')); // triggers flush
-        expect(mockWriteStream.write).toHaveBeenCalledWith(expect.stringContaining('first\nsecond\n'), expect.any(Function));
+        transport.write(second);
+
+        const formatter = new JSONFormatter();
+        const expected = `${formatter.format(first)}\n${formatter.format(second)}\n`;
+        expect(mockWriteStream.write).toHaveBeenCalledWith(
+            expect.stringContaining(formatter.format(first)),
+            expect.any(Function)
+        );
+        // Better: check full content
+        expect(mockWriteStream.write.mock.calls[0][0]).toBe(expected);
     });
 
     it('immediately flushes logs at or above onLevel', () => {
@@ -129,13 +150,17 @@ describe('SmartFileTransport', () => {
             onLevel: LogLevel.WARN,
         });
 
-        transport.write(createLogEntry(LogLevel.INFO)); // below threshold → buffered
+        const info = createLogEntry(LogLevel.INFO, 'info');
+        const error = createLogEntry(LogLevel.ERROR, 'critical');
+
+        transport.write(info);
         expect(mockWriteStream.write).not.toHaveBeenCalled();
 
-        transport.write(createLogEntry(LogLevel.ERROR, 'critical')); // triggers flush
-        const data = mockWriteStream.write.mock.calls[0][0];
-        expect(data).toContain('INFO'); // both logs flushed
-        expect(data).toContain('critical');
+        transport.write(error);
+
+        const formatter = new JSONFormatter();
+        const expected = `${formatter.format(info)}\n${formatter.format(error)}\n`;
+        expect(mockWriteStream.write.mock.calls[0][0]).toBe(expected);
     });
 
     it('resets idle timer on every write', () => {
@@ -146,14 +171,14 @@ describe('SmartFileTransport', () => {
         });
 
         transport.write(createLogEntry());
-        vi.advanceTimersByTime(2000); // not yet flushed
+        vi.advanceTimersByTime(2000);
         expect(mockWriteStream.write).not.toHaveBeenCalled();
 
-        transport.write(createLogEntry()); // resets timer
-        vi.advanceTimersByTime(2500); // still not 3s since last write
+        transport.write(createLogEntry());
+        vi.advanceTimersByTime(2500);
         expect(mockWriteStream.write).not.toHaveBeenCalled();
 
-        vi.advanceTimersByTime(1000); // now 3.5s since last write → flush
+        vi.advanceTimersByTime(1000); // total 3500ms since last write
         expect(mockWriteStream.write).toHaveBeenCalled();
     });
 
@@ -162,21 +187,26 @@ describe('SmartFileTransport', () => {
         transport.write(createLogEntry(LogLevel.INFO));
         transport.write(createLogEntry(LogLevel.DEBUG));
         expect(mockWriteStream.write).not.toHaveBeenCalled();
-        expect(transport).toBeDefined(); // just to satisfy coverage
     });
 
     it('does not write when closing', () => {
         transport = new SmartFileTransport(filePath);
-        transport.close(); // sets isClosing = true
+        transport.close();
         transport.write(createLogEntry(LogLevel.ERROR));
         expect(mockWriteStream.write).not.toHaveBeenCalled();
     });
 
     it('final flush on close', async () => {
         transport = new SmartFileTransport(filePath);
-        transport.write(createLogEntry(LogLevel.INFO, 'final'));
+        const entry = createLogEntry(LogLevel.INFO, 'final');
+        transport.write(entry);
         await transport.close();
-        expect(mockWriteStream.write).toHaveBeenCalledWith(expect.stringContaining('final\n'), expect.any(Function));
+
+        const expectedJson = new JSONFormatter().format(entry);
+        expect(mockWriteStream.write).toHaveBeenCalledWith(
+            expect.stringContaining(expectedJson),
+            expect.any(Function)
+        );
         expect(mockWriteStream.end).toHaveBeenCalled();
     });
 
@@ -189,8 +219,6 @@ describe('SmartFileTransport', () => {
 
         transport = new SmartFileTransport(filePath);
         transport.write(createLogEntry());
-
-        // Flush manually to trigger write
         (transport as any).flush();
 
         expect(consoleErrorSpy).toHaveBeenCalledWith('SmartFileTransport write error:', expect.any(Error));
@@ -199,7 +227,7 @@ describe('SmartFileTransport', () => {
 
     it('flush is no-op when buffer is empty', () => {
         transport = new SmartFileTransport(filePath);
-        (transport as any).flush(); // should not call write
+        (transport as any).flush();
         expect(mockWriteStream.write).not.toHaveBeenCalled();
     });
 
@@ -215,18 +243,37 @@ describe('SmartFileTransport', () => {
 
         transport.write(createLogEntry(LogLevel.INFO, '1'));
         transport.write(createLogEntry(LogLevel.INFO, '2'));
-
-        // Not yet flushed (size=2 < 3)
         expect(mockWriteStream.write).not.toHaveBeenCalled();
 
-        // Trigger by level
         transport.write(createLogEntry(LogLevel.FATAL, 'boom'));
         expect(mockWriteStream.write).toHaveBeenCalled();
         mockWriteStream.write.mockClear();
 
-        // Now test idle
         transport.write(createLogEntry(LogLevel.INFO, 'after'));
         vi.advanceTimersByTime(4000);
         expect(mockWriteStream.write).toHaveBeenCalled();
+    });
+
+    // ✅ Additional: test formatter is customizable
+    it('uses custom formatter if provided', () => {
+        const customFormatter = {
+            format: (entry: LogEntry) => `[${LogLevel[entry.level]}] ${entry.message}`,
+        };
+        transport = new SmartFileTransport(filePath, customFormatter, LogLevel.INFO);
+        const entry = createLogEntry(LogLevel.INFO, 'custom');
+        transport.write(entry);
+        (transport as any).flush();
+        expect(mockWriteStream.write).toHaveBeenCalledWith(
+            expect.stringContaining('[INFO] custom'),
+            expect.any(Function)
+        );
+    });
+
+    // ✅ Additional: test close is idempotent
+    it('close is safe to call multiple times', async () => {
+        transport = new SmartFileTransport(filePath);
+        await transport.close();
+        await transport.close(); // should not throw
+        expect(mockWriteStream.end).toHaveBeenCalledTimes(1);
     });
 });

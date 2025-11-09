@@ -11,7 +11,7 @@ export class HTTPTransport implements Transport {
     private isFlushInProgress = false;
 
     constructor(
-        private config: {
+        protected config: {
             endpoint: string;
             method?: string;
             headers?: Record<string, string>;
@@ -22,7 +22,7 @@ export class HTTPTransport implements Transport {
             maxRetries?: number;
             retryDelay?: number;
         },
-        private readonly fetch: typeof global.fetch = global.fetch
+        protected readonly fetch: typeof global.fetch = global.fetch
     ) {
         this.config = {
             method: 'POST',
@@ -63,7 +63,7 @@ export class HTTPTransport implements Transport {
         }
     }
 
-    private async sendBatch(batch: LogEntry[], retryCount = 0): Promise<void> {
+    protected async sendBatch(batch: LogEntry[], retryCount = 0): Promise<void> {
         const formatted = batch.map(entry => this.config.formatter!.format(entry));
         const data = JSON.stringify(formatted);
 
