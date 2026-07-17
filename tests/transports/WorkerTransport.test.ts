@@ -33,7 +33,7 @@ describe('WorkerTransport', () => {
         console.warn = vi.fn();
 
         // 🟢 Reset Worker mock to return a fresh instance each time it's called
-        WorkerMock.mockImplementation(() => {
+        WorkerMock.mockImplementation(function () {
             const mock = {
                 postMessage: vi.fn(),
                 terminate: vi.fn().mockResolvedValue(undefined),

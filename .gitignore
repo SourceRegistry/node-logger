@@ -82,6 +82,9 @@ out
 .nuxt
 dist
 
+# Generated API docs (typedoc, rebuilt by CI)
+docs
+
 # Gatsby files
 .cache/
 # Comment in the public line in if your project uses Gatsby and not Next.js
@@ -140,3 +143,4 @@ vite.config.ts.timestamp-*
 # IDEA folders
 .idea
 .vscode
+/.mcp.json
