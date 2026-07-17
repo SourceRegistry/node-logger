@@ -1,3 +1,10 @@
+## [1.0.4](https://github.com/SourceRegistry/node-logger/compare/v1.0.3...v1.0.4) (2026-07-17)
+
+
+### Bug Fixes
+
+* update toolchain deps and fix TS/vitest breakage ([920711c](https://github.com/SourceRegistry/node-logger/commit/920711c9b4cd40bd1d58cba745bbd441853824aa)), closes [TypeStrong/TypeDoc#3098](https://github.com/TypeStrong/TypeDoc/issues/3098)
+
 ## [1.0.3](https://github.com/SourceRegistry/node-logger/compare/v1.0.2...v1.0.3) (2025-11-09)
 
 
