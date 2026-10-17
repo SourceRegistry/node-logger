@@ -1,6 +1,6 @@
 import { JSONFormatter } from "../formatters";
 import {LogEntry,Transport, Formatter, LogLevel} from "../types";
-import {createWriteStream, existsSync, mkdirSync, type WriteStream} from "fs";
+import {createWriteStream, existsSync, mkdirSync, fsync, type WriteStream} from "fs";
 import {dirname} from "path";
 
 /**
@@ -13,7 +13,12 @@ import {dirname} from "path";
 export class FileTransport implements Transport {
     private readonly writeStream: WriteStream;
     private writeQueue: Promise<void> = Promise.resolve();
+    private flushQueue: Promise<void> = Promise.resolve();
     private readonly flushTimer?: NodeJS.Timeout;
+    private failure?: unknown;
+    private closed = false;
+    private closePromise?: Promise<void>;
+    private rejectCurrent?: (error: Error) => void;
 
     constructor(
         filePath: string,
@@ -29,16 +34,22 @@ export class FileTransport implements Transport {
         }
 
         this.writeStream = createWriteStream(filePath, { flags: 'a' });
+        this.writeStream.on?.('error', (error: Error) => {
+            this.failure = error;
+            this.rejectCurrent?.(error);
+        });
 
         // Auto-flush timer to ensure data is written to disk
         if (autoFlushInterval > 0) {
             this.flushTimer = setInterval(() => {
-                this.forceFlush();
+                void this.forceFlush().catch(error => console.error('FileTransport flush error:', error));
             }, autoFlushInterval);
+            this.flushTimer.unref?.();
         }
     }
 
     write(entry: LogEntry): void {
+        if (this.closed) throw new Error('FileTransport is closed');
         if (entry.level < this.minLevel) return;
 
         const formatted = this.formatter.format(entry);
@@ -46,9 +57,11 @@ export class FileTransport implements Transport {
         // Non-blocking write - don't await
         this.writeQueue = this.writeQueue.then(() =>
             new Promise<void>((resolve, reject) => {
+                if (this.failure) return reject(this.failure);
+                this.rejectCurrent = reject;
                 this.writeStream.write(formatted + '\n', (error) => {
+                    this.rejectCurrent = undefined;
                     if (error) {
-                        console.error('FileTransport write error:', error);
                         reject(error);
                     } else {
                         resolve();
@@ -56,23 +69,45 @@ export class FileTransport implements Transport {
                 });
             })
         ).catch(error => {
-            // Log error but don't propagate to prevent blocking
-            console.error('FileTransport queue error:', error);
+            this.failure = error;
+            console.error('FileTransport write error:', error);
         });
     }
 
-    private forceFlush(): void {
-        // Force the OS to flush the write stream to disk
-        if (this.writeStream && typeof (this.writeStream as any).sync === 'function') {
-            try {
-                (this.writeStream as any).sync();
-            } catch (error) {
-                console.error('FileTransport flush error:', error);
-            }
+    flush(): Promise<void> {
+        const operation = this.flushQueue.then(() => this.syncFile());
+        this.flushQueue = operation.catch(() => undefined);
+        return operation;
+    }
+
+    private async syncFile(): Promise<void> {
+        await this.writeQueue;
+        if (this.failure) throw this.failure;
+        const fd = (this.writeStream as WriteStream & {fd?: number | null}).fd;
+        if (typeof fd === 'number') {
+            await new Promise<void>((resolve, reject) => fsync(fd, error => error ? reject(error) : resolve()));
+        } else if (typeof (this.writeStream as WriteStream & {sync?: () => void}).sync === 'function') {
+            (this.writeStream as WriteStream & {sync: () => void}).sync();
         }
     }
 
-    async close(): Promise<void> {
+    private async forceFlush(): Promise<void> {
+        try {
+            await this.flush();
+        } catch (error) {
+            this.failure = error;
+            throw error;
+        }
+    }
+
+    close(): Promise<void> {
+        if (this.closePromise) return this.closePromise;
+        this.closed = true;
+        this.closePromise = this.closeStream();
+        return this.closePromise;
+    }
+
+    private async closeStream(): Promise<void> {
         // Clear auto-flush timer
         if (this.flushTimer) {
             clearInterval(this.flushTimer);
@@ -82,10 +117,16 @@ export class FileTransport implements Transport {
         await this.writeQueue;
 
         // Final flush before closing
-        this.forceFlush();
+        await this.forceFlush().catch(error => console.error('FileTransport flush error:', error));
 
-        return new Promise((resolve) => {
-            this.writeStream.end(resolve);
+        await new Promise<void>((resolve, reject) => {
+            if (this.writeStream.destroyed) return resolve();
+            this.rejectCurrent = reject;
+            this.writeStream.end(() => {
+                this.rejectCurrent = undefined;
+                resolve();
+            });
         });
+        if (this.failure) throw this.failure;
     }
 }

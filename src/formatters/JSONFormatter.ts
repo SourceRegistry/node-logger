@@ -1,8 +1,9 @@
 import {LogEntry, Formatter, LogLevel} from "../types";
+import {safeStringify} from './safeStringify';
 
 export class JSONFormatter implements Formatter {
     format(entry: LogEntry): string {
-        return JSON.stringify({
+        return safeStringify({
             timestamp: entry.timestamp.toISOString(),
             level: LogLevel[entry.level],
             message: entry.message,

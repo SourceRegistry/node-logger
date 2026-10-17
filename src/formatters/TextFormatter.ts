@@ -1,4 +1,5 @@
 import {LogEntry, Formatter, LogLevel} from "../types";
+import {safeStringify} from './safeStringify';
 
 export class TextFormatter implements Formatter {
     constructor(private includeTimestamp = true, private colored: boolean = true) {
@@ -23,7 +24,7 @@ export class TextFormatter implements Formatter {
 
         // Handle context
         if (entry.context && Object.keys(entry.context).length > 0) {
-            parts.push(JSON.stringify(entry.context));
+            parts.push(safeStringify(entry.context));
         }
 
         // Build the full output so far

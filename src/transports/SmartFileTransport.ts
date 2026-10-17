@@ -25,19 +25,34 @@ export class SmartFileTransport implements Transport {
     private idleTimer?: NodeJS.Timeout;
     private isClosing = false;
     private closed: boolean = false;
+    private failure?: unknown;
+    private closePromise?: Promise<void>;
+    private rejectClose?: (error: Error) => void;
+    private readonly pending = new Set<Promise<void>>();
+    private readonly rejectWrites = new Set<(error: Error) => void>();
 
     constructor(
         filePath: string,
         private formatter: Formatter = new JSONFormatter(),
         private minLevel: LogLevel = LogLevel.INFO,
-        private autoFlush: AutoFlushConfig = DEFAULT_AUTO_FLUSH
+        private autoFlush: AutoFlushConfig = DEFAULT_AUTO_FLUSH,
+        private limits: {maxBufferSize?: number; maxPendingBatches?: number} = {},
     ) {
+        if ((limits.maxBufferSize !== undefined && (!Number.isInteger(limits.maxBufferSize) || limits.maxBufferSize < 1)) ||
+            (limits.maxPendingBatches !== undefined && (!Number.isInteger(limits.maxPendingBatches) || limits.maxPendingBatches < 1))) {
+            throw new RangeError('Invalid file buffer limits');
+        }
         const dir = dirname(filePath);
         if (!existsSync(dir)) {
             mkdirSync(dir, {recursive: true});
         }
 
         this.writeStream = createWriteStream(filePath, {flags: 'a'});
+        this.writeStream.on?.('error', (error: Error) => {
+            this.failure = error;
+            for (const reject of this.rejectWrites) reject(error);
+            this.rejectClose?.(error);
+        });
 
         if (this.autoFlush.enabled) {
             this.setupAutoFlush();
@@ -48,8 +63,9 @@ export class SmartFileTransport implements Transport {
         // Interval-based flush
         if (this.autoFlush.interval && this.autoFlush.interval > 0) {
             this.flushTimer = setInterval(() => {
-                this.flush();
+                void this.flush().catch(() => undefined);
             }, this.autoFlush.interval);
+            this.flushTimer.unref?.();
         }
 
         // Idle-based flush
@@ -65,8 +81,9 @@ export class SmartFileTransport implements Transport {
 
         if (this.autoFlush.onIdle && this.autoFlush.onIdle > 0) {
             this.idleTimer = setTimeout(() => {
-                this.flush();
+                void this.flush().catch(() => undefined);
             }, this.autoFlush.onIdle);
+            this.idleTimer.unref?.();
         }
     }
 
@@ -74,6 +91,8 @@ export class SmartFileTransport implements Transport {
         if (entry.level < this.minLevel || this.isClosing) return;
 
         const formatted = this.formatter.format(entry);
+        if (this.buffer.length >= (this.limits.maxBufferSize ?? 10000) ||
+            this.pending.size >= (this.limits.maxPendingBatches ?? 100)) throw new Error('SmartFileTransport buffer is full');
         this.buffer.push(formatted);
 
         // If auto-flush is disabled, do nothing else
@@ -84,32 +103,61 @@ export class SmartFileTransport implements Transport {
         this.resetIdleTimer();
 
         let shouldFlush = false;
-        if (this.autoFlush.onLevel && entry.level >= this.autoFlush.onLevel) {
+        if (this.autoFlush.onLevel !== undefined && entry.level >= this.autoFlush.onLevel) {
             shouldFlush = true;
         }
         if (this.autoFlush.onSize && this.buffer.length >= this.autoFlush.onSize) {
             shouldFlush = true;
         }
         if (shouldFlush) {
-            this.flush();
+            void this.flush().catch(() => undefined);
         }
     }
 
-    private flush(): void {
-        if (this.buffer.length === 0) return;
-
-        const data = this.buffer.splice(0).join('\n') + '\n';
-
-        // Non-blocking write
-        this.writeStream.write(data, (error) => {
-            if (error) {
-                console.error('SmartFileTransport write error:', error);
+    public flush(): Promise<void> {
+        if (this.buffer.length) {
+            if (this.writeStream.destroyed) {
+                this.failure = new Error('SmartFileTransport stream was destroyed before flush');
+            } else {
+                const data = this.buffer.splice(0).join('\n') + '\n';
+                const write = new Promise<void>((resolve, reject) => {
+                    let settled = false;
+                    const fail = (error: Error) => {
+                        if (settled) return;
+                        settled = true;
+                        this.rejectWrites.delete(fail);
+                        this.failure = error;
+                        console.error('SmartFileTransport write error:', error);
+                        reject(error);
+                    };
+                    this.rejectWrites.add(fail);
+                    try {
+                        this.writeStream.write(data, error => {
+                            this.rejectWrites.delete(fail);
+                            if (error) fail(error);
+                            else if (!settled) { settled = true; resolve(); }
+                        });
+                    } catch (error) { fail(error as Error); }
+                });
+                this.pending.add(write);
+                void write.then(() => this.pending.delete(write), () => this.pending.delete(write));
             }
-        });
+        }
+        return this.waitForPending();
     }
 
-    async close(): Promise<void> {
-        if (this.closed) return; // 👈 early exit
+    private async waitForPending(): Promise<void> {
+        await Promise.allSettled([...this.pending]);
+        if (this.failure) throw this.failure;
+    }
+
+    close(): Promise<void> {
+        if (this.closePromise) return this.closePromise;
+        this.closePromise = this.closeStream();
+        return this.closePromise;
+    }
+
+    private async closeStream(): Promise<void> {
         this.closed = true;
         this.isClosing = true;
 
@@ -122,10 +170,16 @@ export class SmartFileTransport implements Transport {
         }
 
         // Final flush
-        this.flush();
+        await this.flush().catch(() => undefined);
 
-        return new Promise((resolve) => {
-            this.writeStream.end(resolve);
+        await new Promise<void>((resolve, reject) => {
+            if (this.writeStream.destroyed) return resolve();
+            this.rejectClose = reject;
+            this.writeStream.end(() => {
+                this.rejectClose = undefined;
+                resolve();
+            });
         });
+        if (this.failure) throw this.failure;
     }
 }

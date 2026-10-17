@@ -61,7 +61,7 @@ describe('FileTransport', () => {
 
     afterEach(async () => {
         if (transport?.close) {
-            await transport.close();
+            await transport.close().catch(() => undefined);
         }
     });
 
@@ -153,6 +153,7 @@ describe('FileTransport', () => {
         await (transport as any).writeQueue;
 
         expect(consoleErrorSpy).toHaveBeenCalledWith('FileTransport write error:', expect.any(Error));
+        await expect(transport.close()).rejects.toThrow('Disk full');
         consoleErrorSpy.mockRestore();
     });
 
@@ -167,22 +168,21 @@ describe('FileTransport', () => {
         forceFlushSpy.mockRestore();
     });
 
-    it('forceFlush calls sync if available', () => {
+    it('forceFlush calls sync if available', async () => {
         transport = new FileTransport(filePath);
-        (transport as any).forceFlush();
+        await (transport as any).forceFlush();
         expect(mockWriteStream.sync).toHaveBeenCalled();
     });
 
-    it('forceFlush handles sync error gracefully', () => {
+    it('forceFlush handles sync error gracefully', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         mockWriteStream.sync.mockImplementation(() => {
             throw new Error('Sync failed');
         });
 
         transport = new FileTransport(filePath);
-        (transport as any).forceFlush();
-
-        expect(consoleErrorSpy).toHaveBeenCalledWith('FileTransport flush error:', expect.any(Error));
+        await expect((transport as any).forceFlush()).rejects.toThrow('Sync failed');
+        await expect(transport.close()).rejects.toThrow('Sync failed');
         consoleErrorSpy.mockRestore();
     });
 

@@ -2,32 +2,43 @@ import {LogEntry, LogLevel, Transport, ILogger} from "./types";
 import {ConsoleTransport, ElasticsearchTransport, FileTransport} from "./transports";
 import {JSONFormatter, TextFormatter} from "./formatters";
 
+interface LoggerState {
+    transports: Transport[];
+    pending: Set<Promise<void>>;
+    errors: unknown[];
+    closed: boolean;
+    closePromise?: Promise<void>;
+}
+
 export class Logger implements ILogger {
-    private readonly transports: Transport[] = [];
+    private state: LoggerState;
     private tags: string[] = [];
 
     constructor(
         private minLevel: LogLevel = LogLevel.INFO,
         transports: Transport[] = [new ConsoleTransport()]
     ) {
-        this.transports = transports;
+        this.state = {transports: [...transports], pending: new Set(), errors: [], closed: false};
     }
 
     addTransport(transport: Transport): this {
-        this.transports.push(transport);
+        if (this.state.closed) throw new Error('Logger is closed');
+        this.state.transports.push(transport);
         return this;
     }
 
     removeTransport(transport: Transport): this {
-        const index = this.transports.indexOf(transport);
+        if (this.state.closed) throw new Error('Logger is closed');
+        const index = this.state.transports.indexOf(transport);
         if (index > -1) {
-            this.transports.splice(index, 1);
+            this.state.transports.splice(index, 1);
         }
         return this;
     }
 
     withTags(...tags: string[]): Logger {
-        const child = new Logger(this.minLevel, this.transports);
+        const child = new Logger(this.minLevel, []);
+        child.state = this.state;
         child.tags = [...this.tags, ...tags];
         return child;
     }
@@ -37,7 +48,8 @@ export class Logger implements ILogger {
         return this;
     }
 
-    private log(level: LogLevel, message: string, context?: Record<string, any>, error?: Error): void {
+    private log(level: LogLevel, message: string, context?: Record<string, unknown>, error?: Error): void {
+        if (this.state.closed) throw new Error('Logger is closed');
         if (level < this.minLevel) return;
 
         const entry: LogEntry = {
@@ -49,39 +61,51 @@ export class Logger implements ILogger {
             tags: this.tags.length > 0 ? [...this.tags] : undefined
         };
 
-        // Fire and forget - don't block on transport writes
-        this.transports.forEach(transport => {
+        this.state.transports.forEach(transport => {
             try {
                 const result = transport.write(entry);
-                // If transport returns a promise, catch errors but don't await
-                if (result instanceof Promise) {
-                    result.catch(error => {
-                        console.error('Async transport failed:', error);
-                    });
+                if (result && typeof result.then === 'function') {
+                    const pending = Promise.resolve(result).then(
+                        () => undefined,
+                        error => this.recordError('Async transport failed:', error)
+                    );
+                    this.state.pending.add(pending);
+                    void pending.finally(() => this.state.pending.delete(pending));
                 }
             } catch (error) {
-                console.error('Sync transport failed:', error);
+                this.recordError('Sync transport failed:', error);
             }
         });
     }
 
-    trace(message: string, context?: Record<string, any>): void {
+    private recordError(message: string, error: unknown): void {
+        this.state.errors.push(error);
+        console.error(message, error);
+    }
+
+    private throwErrors(): void {
+        if (this.state.errors.length) {
+            throw new AggregateError([...new Set(this.state.errors)], 'One or more log transports failed');
+        }
+    }
+
+    trace(message: string, context?: Record<string, unknown>): void {
         this.log(LogLevel.TRACE, message, context);
     }
 
-    debug(message: string, context?: Record<string, any>): void {
+    debug(message: string, context?: Record<string, unknown>): void {
         this.log(LogLevel.DEBUG, message, context);
     }
 
-    info(message: string, context?: Record<string, any>): void {
+    info(message: string, context?: Record<string, unknown>): void {
         this.log(LogLevel.INFO, message, context);
     }
 
-    warn(message: string, context?: Record<string, any>): void {
+    warn(message: string, context?: Record<string, unknown>): void {
         this.log(LogLevel.WARN, message, context);
     }
 
-    error(message: string, contextOrError?: Record<string, any> | Error, error?: Error): void {
+    error(message: string, contextOrError?: Record<string, unknown> | Error, error?: Error): void {
         if (contextOrError instanceof Error) {
             this.log(LogLevel.ERROR, message, undefined, contextOrError);
         } else {
@@ -89,7 +113,7 @@ export class Logger implements ILogger {
         }
     }
 
-    fatal(message: string, contextOrError?: Record<string, any> | Error, error?: Error): void {
+    fatal(message: string, contextOrError?: Record<string, unknown> | Error, error?: Error): void {
         if (contextOrError instanceof Error) {
             this.log(LogLevel.FATAL, message, undefined, contextOrError);
         } else {
@@ -97,16 +121,34 @@ export class Logger implements ILogger {
         }
     }
 
-    async close(): Promise<void> {
-        await Promise.all(
-            this.transports
-                .filter(transport => transport.close)
-                .map(transport =>
-                    Promise.resolve(transport.close!()).catch(() => {
-                        // Intentionally ignore close errors to ensure graceful shutdown
-                    })
-                )
-        );
+    async flush(): Promise<void> {
+        await Promise.all(this.state.pending);
+        const results = await Promise.allSettled(this.state.transports.map(transport =>
+            Promise.resolve().then(() => transport.flush?.())));
+        for (const result of results) {
+            if (result.status === 'rejected') this.state.errors.push(result.reason);
+        }
+        this.throwErrors();
+    }
+
+    close(): Promise<void> {
+        if (this.state.closePromise) return this.state.closePromise;
+        this.state.closed = true;
+        this.state.closePromise = (async () => {
+            await Promise.all(this.state.pending);
+            const flushResults = await Promise.allSettled(this.state.transports.map(transport =>
+                Promise.resolve().then(() => transport.flush?.())));
+            for (const result of flushResults) {
+                if (result.status === 'rejected') this.state.errors.push(result.reason);
+            }
+            const results = await Promise.allSettled(this.state.transports.map(transport =>
+                Promise.resolve().then(() => transport.close?.())));
+            for (const result of results) {
+                if (result.status === 'rejected') this.state.errors.push(result.reason);
+            }
+            this.throwErrors();
+        })();
+        return this.state.closePromise;
     }
 }
 

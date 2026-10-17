@@ -114,7 +114,7 @@ describe('BufferedFileTransport', () => {
         expect(mockWriteStream.write.mock.calls[0][0]).toContain('final');
     });
 
-    it('handles write error gracefully', () => {
+    it('handles write error gracefully', async () => {
         const consoleSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         const failingStream = {
             write: vi.fn().mockImplementation((data, cb) => {
@@ -128,7 +128,7 @@ describe('BufferedFileTransport', () => {
         const transport = new BufferedFileTransport(filePath);
         const entry = { level: LogLevel.INFO, message: 'test', timestamp: new Date(), context: {} };
         transport.write(entry);
-        transport.flush();
+        await expect(transport.flush()).rejects.toThrow('disk full');
 
         expect(consoleSpy).toHaveBeenCalledWith('BufferedFileTransport write error:', expect.any(Error));
         consoleSpy.mockRestore();
@@ -147,14 +147,14 @@ describe('BufferedFileTransport', () => {
         expect(mockWriteStream.write).not.toHaveBeenCalled();
     });
 
-    it('does not write if stream is destroyed', () => {
+    it('does not write if stream is destroyed', async () => {
         const destroyedStream = { ...mockWriteStream, destroyed: true };
         (fs.createWriteStream as any).mockReturnValue(destroyedStream);
 
         const transport = new BufferedFileTransport(filePath);
         const entry = { level: LogLevel.INFO, message: 'test', timestamp: new Date(), context: {} };
         transport.write(entry);
-        transport.flush();
+        await expect(transport.flush()).rejects.toThrow('destroyed before flush');
 
         expect(destroyedStream.write).not.toHaveBeenCalled();
     });

@@ -4,7 +4,7 @@ export interface LogEntry {
     level: LogLevel;
     message: string;
     timestamp: Date;
-    context?: Record<string, any>;
+    context?: Record<string, unknown>;
     error?: Error;
     tags?: string[];
 }

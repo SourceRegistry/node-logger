@@ -29,7 +29,7 @@ describe('ElasticsearchTransport', () => {
 
         expect((transport as any).config.headers).toEqual({
             'Content-Type': 'application/x-ndjson',
-            'Authorization': 'Bearer abc123'
+            'Authorization': 'ApiKey abc123'
         });
     });
 
@@ -56,8 +56,7 @@ describe('ElasticsearchTransport', () => {
 
         expect(indexLine).toEqual({
             index: {
-                _index: 'logs',
-                _type: '_doc'
+                _index: 'logs'
             }
         });
 
@@ -166,9 +165,9 @@ describe('ElasticsearchTransport', () => {
         expect(lines).toHaveLength(4);
 
         // Validate structure
-        expect(JSON.parse(lines[0])).toEqual({ index: { _index: 'logs', _type: '_doc' } });
+        expect(JSON.parse(lines[0])).toEqual({ index: { _index: 'logs' } });
         expect(JSON.parse(lines[1])).toMatchObject({ message: 'user login' });
-        expect(JSON.parse(lines[2])).toEqual({ index: { _index: 'logs', _type: '_doc' } });
+        expect(JSON.parse(lines[2])).toEqual({ index: { _index: 'logs' } });
         expect(JSON.parse(lines[3])).toMatchObject({ message: 'payment failed' });
     });
 

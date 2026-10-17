@@ -61,7 +61,7 @@ describe('SmartFileTransport', () => {
 
     afterEach(async () => {
         if (transport?.close) {
-            await transport.close();
+            await transport.close().catch(() => undefined);
         }
         vi.useRealTimers(); // ensure real timers after each test
     });
@@ -210,7 +210,7 @@ describe('SmartFileTransport', () => {
         expect(mockWriteStream.end).toHaveBeenCalled();
     });
 
-    it('handles write errors gracefully', () => {
+    it('handles write errors gracefully', async () => {
         const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         mockWriteStream.write.mockImplementationOnce((data, cb) => {
             if (cb) cb(new Error('Disk full'));
@@ -219,9 +219,10 @@ describe('SmartFileTransport', () => {
 
         transport = new SmartFileTransport(filePath);
         transport.write(createLogEntry());
-        (transport as any).flush();
+        await expect(transport.flush()).rejects.toThrow('Disk full');
 
         expect(consoleErrorSpy).toHaveBeenCalledWith('SmartFileTransport write error:', expect.any(Error));
+        await expect(transport.close()).rejects.toThrow('Disk full');
         consoleErrorSpy.mockRestore();
     });
 

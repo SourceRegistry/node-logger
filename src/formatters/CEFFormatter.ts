@@ -10,7 +10,7 @@ export class CEFFormatter implements Formatter {
     format(entry: LogEntry): string {
         const severity = this.mapLevelToSeverity(entry.level);
         // CEF:Version|Device Vendor|Device Product|Device Version|Signature ID|Name|Severity|Extension
-        const header = `CEF:0|${this.vendor}|${this.product}|${this.version}|${LogLevel[entry.level]}|${entry.message}|${severity}|`;
+        const header = `CEF:0|${this.escapeHeader(this.vendor)}|${this.escapeHeader(this.product)}|${this.escapeHeader(this.version)}|${LogLevel[entry.level]}|${this.escapeHeader(entry.message)}|${severity}|`;
 
         const extensions: string[] = [
             `rt=${entry.timestamp.getTime()}`
@@ -18,13 +18,20 @@ export class CEFFormatter implements Formatter {
 
         if (entry.context) {
             for (const [key, value] of Object.entries(entry.context)) {
-                extensions.push(`${key}=${String(value)}`);
+                const safeKey = key.replace(/[^a-zA-Z0-9_]/g, '_');
+                if (safeKey) extensions.push(`${safeKey}=${this.escapeExtension(String(value))}`);
             }
         }
 
-        // For 100% compatibility with your current usage, we won't escape yet
-        // (you can add escaping later if needed for production SIEM)
         return header + extensions.join(' ');
+    }
+
+    private escapeHeader(value: string): string {
+        return value.replace(/\\/g, '\\\\').replace(/\|/g, '\\|').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
+    }
+
+    private escapeExtension(value: string): string {
+        return value.replace(/\\/g, '\\\\').replace(/=/g, '\\=').replace(/\r/g, '\\r').replace(/\n/g, '\\n');
     }
 
     private mapLevelToSeverity(level: LogLevel): number {

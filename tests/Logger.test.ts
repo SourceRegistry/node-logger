@@ -202,7 +202,6 @@ describe('Logger', () => {
         } as Transport;
 
         const logger = new Logger(LogLevel.INFO, [faultyCloseTransport]);
-        // Should not throw
-        await expect(logger.close()).resolves.toBeUndefined()
+        await expect(logger.close()).rejects.toThrow('One or more log transports failed')
     });
 });

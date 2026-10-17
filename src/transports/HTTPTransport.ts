@@ -1,99 +1,126 @@
-import { LogEntry, Transport, Formatter, LogLevel } from "../types";
-import { JSONFormatter } from "../formatters";
+import { LogEntry, Transport, Formatter, LogLevel } from '../types';
+import { JSONFormatter } from '../formatters';
 
-/**
- * HTTPTransport using native fetch
- * - Auto-flushes every N seconds or when queue reaches batchSize
- */
+export interface HTTPTransportConfig {
+    endpoint: string;
+    method?: string;
+    headers?: Record<string, string>;
+    formatter?: Formatter;
+    batchSize?: number;
+    flushInterval?: number;
+    minLevel?: LogLevel;
+    maxRetries?: number;
+    retryDelay?: number;
+    requestTimeout?: number;
+    maxQueueSize?: number;
+}
+
+export class HTTPDeliveryError extends Error {
+    constructor(message: string, readonly retryable: boolean) {
+        super(message);
+        this.name = 'HTTPDeliveryError';
+    }
+}
+
+/** Batches entries and delivers them over HTTP. Call close() during shutdown. */
 export class HTTPTransport implements Transport {
     private queue: LogEntry[] = [];
-    private readonly timer: NodeJS.Timeout;
-    private isFlushInProgress = false;
+    private readonly timer?: NodeJS.Timeout;
+    private inFlight?: Promise<void>;
+    private closePromise?: Promise<void>;
+    private closing = false;
+    private failure?: unknown;
+    protected readonly config: Required<HTTPTransportConfig>;
 
-    constructor(
-        protected config: {
-            endpoint: string;
-            method?: string;
-            headers?: Record<string, string>;
-            formatter?: Formatter;
-            batchSize?: number;
-            flushInterval?: number;
-            minLevel?: LogLevel;
-            maxRetries?: number;
-            retryDelay?: number;
-        },
-        protected readonly fetch: typeof global.fetch = global.fetch
-    ) {
+    constructor(config: HTTPTransportConfig, protected readonly fetch: typeof global.fetch = global.fetch) {
+        if (!config.endpoint) throw new Error('HTTP endpoint is required');
         this.config = {
-            method: 'POST',
-            formatter: new JSONFormatter(),
-            batchSize: 10,
-            flushInterval: 5000,
-            minLevel: LogLevel.INFO,
-            maxRetries: 3,
-            retryDelay: 1000,
-            ...config,
+            endpoint: config.endpoint,
+            method: 'POST', headers: {}, formatter: new JSONFormatter(), batchSize: 10,
+            flushInterval: 5000, minLevel: LogLevel.INFO, maxRetries: 3,
+            retryDelay: 1000, requestTimeout: 10000, maxQueueSize: 10000,
+            ...Object.fromEntries(Object.entries(config).filter(([, value]) => value !== undefined)),
         };
-
-        this.timer = setInterval(() => {
-            if (!this.isFlushInProgress) this.flush();
-        }, this.config.flushInterval);
-    }
-
-    write(entry: LogEntry): void {
-        if (entry.level < (this.config.minLevel ?? LogLevel.INFO)) return;
-        this.queue.push(entry);
-
-        if (this.queue.length >= (this.config.batchSize ?? 10) && !this.isFlushInProgress) {
-            this.flush(); // fire & forget
+        if (!Number.isInteger(this.config.batchSize) || this.config.batchSize < 1) throw new RangeError('batchSize must be positive');
+        if (!Number.isInteger(this.config.maxQueueSize) || this.config.maxQueueSize < 1) throw new RangeError('maxQueueSize must be positive');
+        if (!Number.isInteger(this.config.maxRetries) || this.config.maxRetries < 0) throw new RangeError('maxRetries must be non-negative');
+        if (this.config.requestTimeout <= 0 || this.config.retryDelay < 0) throw new RangeError('Invalid HTTP timeout or retry delay');
+        if (this.config.flushInterval > 0) {
+            this.timer = setInterval(() => { void this.flush().catch(error => console.error('HTTPTransport flush failed:', error)); }, this.config.flushInterval);
+            this.timer.unref();
         }
     }
 
-    public async flush(): Promise<void> {
-        if (this.queue.length === 0 || this.isFlushInProgress) return;
-        this.isFlushInProgress = true;
+    write(entry: LogEntry): void {
+        if (this.closing) throw new Error('HTTPTransport is closed');
+        if (entry.level < this.config.minLevel) return;
+        if (this.queue.length >= this.config.maxQueueSize) throw new Error('HTTPTransport queue is full');
+        this.queue.push(entry);
+        if (this.queue.length >= this.config.batchSize) {
+            void this.flush().catch(error => console.error('HTTPTransport flush failed:', error));
+        }
+    }
 
-        const batch = this.queue.splice(0);
-        try {
-            await this.sendBatch(batch);
-        } catch (err) {
-            console.error('HTTPTransport flush failed:', err);
-        } finally {
-            this.isFlushInProgress = false;
+    flush(): Promise<void> {
+        if (this.inFlight) return this.inFlight;
+        if (this.queue.length === 0) return Promise.resolve();
+        const operation = (async () => {
+            while (this.queue.length) {
+                const batch = this.queue.splice(0, this.config.batchSize);
+                await this.sendBatch(batch);
+            }
+        })().catch(error => {
+            this.failure = error;
+            throw error;
+        });
+        this.inFlight = operation.finally(() => { this.inFlight = undefined; });
+        return this.inFlight;
+    }
+
+    protected serializeBatch(batch: LogEntry[]): string {
+        return JSON.stringify(batch.map(entry => this.config.formatter.format(entry)));
+    }
+
+    protected async validateResponse(response: Response): Promise<void> {
+        if (!response.ok) {
+            throw new HTTPDeliveryError(`HTTP ${response.status} from log endpoint`,
+                response.status === 408 || response.status === 429 || response.status >= 500);
         }
     }
 
     protected async sendBatch(batch: LogEntry[], retryCount = 0): Promise<void> {
-        const formatted = batch.map(entry => this.config.formatter!.format(entry));
-        const data = JSON.stringify(formatted);
-
-        try {
-            const response = await this.fetch(this.config.endpoint, {
-                method: this.config.method,
-                headers: {
-                    'Content-Type': 'application/json',
-                    ...(this.config.headers ?? {}),
-                },
-                body: data,
-            });
-
-            if (!response.ok) {
-                const text = await response.text().catch(() => '');
-                throw new Error(`HTTP ${response.status}: ${text}`);
+        const body = this.serializeBatch(batch);
+        for (let attempt = retryCount; attempt <= this.config.maxRetries; attempt++) {
+            const controller = new AbortController();
+            const timeout = setTimeout(() => controller.abort(), this.config.requestTimeout);
+            timeout.unref?.();
+            try {
+                const response = await this.fetch(this.config.endpoint, {
+                    method: this.config.method,
+                    headers: {'Content-Type': 'application/json', ...this.config.headers},
+                    body,
+                    signal: controller.signal,
+                });
+                await this.validateResponse(response);
+                return;
+            } catch (error) {
+                if (attempt === this.config.maxRetries || (error instanceof HTTPDeliveryError && !error.retryable)) throw error;
+                await new Promise<void>(resolve => setTimeout(resolve, this.config.retryDelay * 2 ** attempt));
+            } finally {
+                clearTimeout(timeout);
             }
-        } catch (err) {
-            if (retryCount < (this.config.maxRetries ?? 3)) {
-                const delay = (this.config.retryDelay ?? 1000) * Math.pow(2, retryCount);
-                await new Promise(r => setTimeout(r, delay));
-                return this.sendBatch(batch, retryCount + 1);
-            }
-            throw err;
         }
     }
 
-    async close(): Promise<void> {
-        clearInterval(this.timer);
-        this.isFlushInProgress = false;
-        await this.flush();
+    close(): Promise<void> {
+        if (this.closePromise) return this.closePromise;
+        this.closing = true;
+        if (this.timer) clearInterval(this.timer);
+        this.closePromise = (async () => {
+            if (this.inFlight) await this.inFlight.catch(() => undefined);
+            while (this.queue.length) await this.flush().catch(() => undefined);
+            if (this.failure) throw this.failure;
+        })();
+        return this.closePromise;
     }
 }

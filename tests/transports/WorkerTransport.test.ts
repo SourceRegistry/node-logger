@@ -164,6 +164,28 @@ describe('WorkerTransport', () => {
         );
     });
 
+    it('opens the circuit after repeated worker failures', () => {
+        for (let attempt = 0; attempt < 6; attempt++) {
+            const worker = getCurrentWorker();
+            const handler = (worker.on as any).mock.calls.find((call: any) => call[0] === 'error')[1];
+            handler(new Error(`failure ${attempt}`));
+            if (attempt < 5) vi.advanceTimersByTime(1000);
+        }
+        vi.advanceTimersByTime(5000);
+        expect(mockWorkerInstances).toHaveLength(6);
+        expect(console.error).toHaveBeenCalledWith('WorkerTransport: circuit breaker opened after 5 restart attempts');
+    });
+
+    it('does not restart after close and reports queued messages', async () => {
+        const worker = getCurrentWorker();
+        const handler = (worker.on as any).mock.calls.find((call: any) => call[0] === 'error')[1];
+        handler(new Error('crash'));
+        transport.write(createLogEntry(LogLevel.INFO, 'queued'));
+        await expect(transport.close()).rejects.toThrow('1 worker log messages were not delivered');
+        vi.advanceTimersByTime(5000);
+        expect(mockWorkerInstances).toHaveLength(1);
+    });
+
     it('logs exit code if worker exits abnormally', () => {
         const worker = getCurrentWorker();
         const exitHandlers = (worker.on as any).mock.calls

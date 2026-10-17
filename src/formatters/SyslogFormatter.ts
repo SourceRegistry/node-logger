@@ -27,7 +27,8 @@ export class SyslogFormatter implements Formatter {
                 for (const [key, value] of Object.entries(entry.context)) {
                     // Only include primitive values
                     if (value != null && (typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean')) {
-                        sdParams.push(`${this.escape(key)}="${this.escape(String(value))}"`);
+                        const safeKey = key.replace(/[^a-zA-Z0-9_@.-]/g, '_').slice(0, 32);
+                        if (safeKey) sdParams.push(`${safeKey}="${this.escape(String(value))}"`);
                     }
                 }
             }

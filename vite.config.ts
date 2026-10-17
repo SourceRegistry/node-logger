@@ -8,7 +8,7 @@ export default defineConfig({
         lib: {
             entry: 'src/index.ts',
             formats: ['es', 'cjs'],
-            fileName: (format) => `index.${format}.js`
+            fileName: (format) => format === 'cjs' ? 'index.cjs' : 'index.es.js'
         },
         rollupOptions: {
             external: ["crypto", 'path', 'fs', 'worker_threads'],

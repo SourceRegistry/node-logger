@@ -24,7 +24,7 @@ describe('HTTPTransport', () => {
         vi.clearAllMocks();
         vi.useRealTimers();
         if (transport?.close) {
-            await transport.close();
+            await transport.close().catch(() => undefined);
         }
     });
 
@@ -83,14 +83,12 @@ describe('HTTPTransport', () => {
     });
 
     it('logs error after max retries exceeded', async () => {
-        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
         mockFetch = vi.fn().mockRejectedValue(new Error('Final failure'));
         transport = new HTTPTransport({ endpoint, maxRetries: 1, retryDelay: 10 }, mockFetch);
         transport.write(createLogEntry());
-        await transport.flush();
-        expect(consoleErrorSpy).toHaveBeenCalledWith('HTTPTransport flush failed:', expect.any(Error));
+        await expect(transport.flush()).rejects.toThrow('Final failure');
+        await expect(transport.close()).rejects.toThrow('Final failure');
         expect(mockFetch).toHaveBeenCalledTimes(2);
-        consoleErrorSpy.mockRestore();
     });
 
     it('uses custom formatter', async () => {
@@ -158,13 +156,12 @@ describe('HTTPTransport', () => {
         await transport.flush();
 
         expect(mockFetch).toHaveBeenCalledTimes(3);
-        expect(setTimeoutSpy).toHaveBeenCalledTimes(2);
+        expect(setTimeoutSpy).toHaveBeenCalledTimes(5);
         // Cleanup
         setTimeoutSpy.mockRestore();
     });
 
     it('handles response.text() rejection gracefully', async () => {
-        const consoleErrorSpy = vi.spyOn(console, 'error').mockImplementation(() => {});
 
         // Mock a bad response where .text() rejects
         const badResponse = {
@@ -175,14 +172,8 @@ describe('HTTPTransport', () => {
 
         mockFetch = vi.fn().mockResolvedValue(badResponse);
 
-        transport = new HTTPTransport({ endpoint }, mockFetch);
+        transport = new HTTPTransport({ endpoint, maxRetries: 0 }, mockFetch);
         transport.write(createLogEntry());
-        await transport.flush();
-
-        expect(consoleErrorSpy).toHaveBeenCalledWith(
-            'HTTPTransport flush failed:',
-            expect.any(Error)
-        );
-        consoleErrorSpy.mockRestore();
+        await expect(transport.flush()).rejects.toThrow('HTTP 500');
     },30_000);
 });
