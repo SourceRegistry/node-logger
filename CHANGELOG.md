@@ -1,3 +1,10 @@
+# [1.1.0](https://github.com/SourceRegistry/node-logger/compare/v1.0.4...v1.1.0) (2026-10-17)
+
+
+### Features
+
+* harden logger and productionize release pipeline ([1bd5f14](https://github.com/SourceRegistry/node-logger/commit/1bd5f149c8a20d606da4f9fb6ab9469c3cb331d7))
+
 ## [1.0.4](https://github.com/SourceRegistry/node-logger/compare/v1.0.3...v1.0.4) (2026-07-17)
 
 
